@@ -1,46 +1,9 @@
-import { COUNTIES, COMPANIES, NOT_APPLICABLE } from '../constants/allConstants'
+import { NOT_APPLICABLE } from '../constants/allConstants'
 
-// Renders every input on the page: the county and company selects, plus one
-// control per plan field, chosen from that field's `inputType`.
-export default function PlanForm({
-  countyId,
-  onCountyChange,
-  companyId,
-  onCompanyChange,
-  fields,
-  plan,
-  onFieldChange,
-}) {
+// Renders one control per plan field, chosen from that field's `inputType`.
+export default function PlanForm({ fields, plan, onFieldChange }) {
   return (
     <>
-      <label htmlFor="county">County</label>
-      <select
-        id="county"
-        value={countyId}
-        onChange={(e) => onCountyChange(e.target.value)}
-      >
-        <option value="">Select a county…</option>
-        {COUNTIES.map((county) => (
-          <option key={county.id} value={county.id}>
-            {county.name}
-          </option>
-        ))}
-      </select>
-
-      <label htmlFor="company">Company</label>
-      <select
-        id="company"
-        value={companyId}
-        onChange={(e) => onCompanyChange(e.target.value)}
-      >
-        <option value="">Select a company…</option>
-        {COMPANIES.map((company) => (
-          <option key={company.id} value={company.id}>
-            {company.name}
-          </option>
-        ))}
-      </select>
-
       <h2>Plan Details</h2>
       {fields.map((field) => {
         if (field.inputType === 'boolean') {
@@ -126,6 +89,7 @@ export default function PlanForm({
               value={plan[field.name]}
               onChange={(e) => onFieldChange(field.name, e.target.value)}
             />
+            {field.hint && <p className="hint">{field.hint}</p>}
           </div>
         )
       })}
