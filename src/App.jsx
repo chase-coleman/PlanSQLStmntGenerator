@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { EMPTY_PLAN } from './constants/allConstants'
 import {
   visibleFields,
-  effectiveValues,
   validate,
   buildStatements,
   preludeStatements,
+  publishStatement,
+  zeroedBenefits,
+  emittedPayload,
 } from './utils/planSql'
 import { matchingGroups, findGroup } from './utils/planGroups'
 import PlanPicker from './components/PlanPicker'
@@ -23,9 +25,11 @@ export default function App() {
   const [companyId, setCompanyId] = useState('')
   // Read back from the database after the INSERT; the join rows need it.
   const [newPlanId, setNewPlanId] = useState('')
+  // Publishing is a deliberate, separate decision, so it starts off.
+  const [publish, setPublish] = useState(false)
   const [plan, setPlan] = useState(EMPTY_PLAN)
 
-  const context = { mode, companyId, countyIds, planId: newPlanId }
+  const context = { mode, companyId, countyIds, planId: newPlanId, publish }
 
   const groups = matchingGroups({ countyIds, companyId })
   const selectedGroup = mode === 'new' ? null : findGroup(plan.planGroupId)
@@ -35,6 +39,8 @@ export default function App() {
   const problems = validate(plan, context)
   const statements = buildStatements(plan, context)
   const prelude = preludeStatements(context)
+  const publishLater = publishStatement(plan, context)
+  const zeroed = zeroedBenefits(plan)
 
   const updateField = (name, value) => {
     setPlan((prev) => ({ ...prev, [name]: value }))
@@ -120,15 +126,13 @@ export default function App() {
         mode={mode}
         planId={newPlanId}
         onPlanIdChange={setNewPlanId}
+        publish={publish}
+        onPublishChange={setPublish}
+        zeroed={zeroed}
+        publishLater={publishLater}
       />
 
-      <CurrentValues
-        values={
-          mode === 'new'
-            ? { ...effectiveValues(plan), companyId: Number(companyId) || null, countyIds }
-            : effectiveValues(plan)
-        }
-      />
+      <CurrentValues values={emittedPayload(plan, context)} />
     </main>
   )
 }

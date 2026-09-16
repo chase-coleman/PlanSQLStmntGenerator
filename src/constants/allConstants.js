@@ -134,9 +134,21 @@ export const REFERENCE_AUDIT_QUERY =
 // `uk_plan_group_year` makes (plan_group_id, plan_year) unique.
 export const KEY_COLUMNS = ['plan_group_id', 'plan_year']
 
-// Set on every generated UPDATE: false means "placeholder", which makes the
-// live frontend render every benefit as N/A.
-export const ALWAYS_PUBLISHED_COLUMN = 'benefits_published'
+// Never set automatically. CMS releases plan details in stages, and because
+// every benefit column is NOT NULL an unknown value has to be entered as 0.
+// Publishing a row like that makes the live site render those placeholder
+// zeros as real benefits — a plan whose radiology copay simply has not been
+// published yet would advertise "Radiology Copay: $0" to beneficiaries.
+export const PUBLISHED_COLUMN = 'benefits_published'
+
+// Columns where 0 is a normal, real value rather than a sign that the benefit
+// has not been published yet. Used for the reminder, which is never blocking.
+export const ZERO_IS_LEGITIMATE = [
+  'monthlyPremium',
+  'givebackAmount',
+  'drVisit',
+  'radiologyCoinsurance',
+]
 
 // One entry per column the generator writes. `column` is the snake_case name
 // in MySQL; `inputType` is what the form renders. `id` and `company_id` are

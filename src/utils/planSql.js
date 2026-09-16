@@ -2,7 +2,8 @@ import {
   PLAN_FIELDS,
   PLAN_GROUPS,
   NOT_APPLICABLE,
-  ALWAYS_PUBLISHED_COLUMN,
+  PUBLISHED_COLUMN,
+  ZERO_IS_LEGITIMATE,
   COMPANY_COLUMN,
   COUNTIES_PLAN,
   COUNTIES_COMPANIES,
@@ -117,15 +118,18 @@ export const preludeStatements = (context = {}) => {
 // An existing 2027 row is a zeroed placeholder, so it is updated in place.
 // The row is addressed by (plan_group_id, plan_year) because `id` is
 // auto-increment and uk_plan_group_year makes that pair unique.
-const buildUpdate = (values) => {
+const buildUpdate = (values, { publish }) => {
   const fields = columnFields()
 
   const assignments = fields
     .filter((field) => !field.isKey)
     .map((field) => `${backtick(field.column)} = ${literal(field, values[field.name])}`)
 
-  // Real benefits are being entered, so the row stops being a placeholder.
-  assignments.push(`${backtick(ALWAYS_PUBLISHED_COLUMN)} = TRUE`)
+  // Only when the user confirms every benefit is known. When they have not,
+  // the column is left out rather than written FALSE: the placeholder rows are
+  // already FALSE, and omitting it means re-running a partial update can never
+  // unpublish a plan that was already live.
+  if (publish) assignments.push(`${backtick(PUBLISHED_COLUMN)} = TRUE`)
 
   const conditions = fields
     .filter((field) => field.isKey)
@@ -134,7 +138,9 @@ const buildUpdate = (values) => {
   return [
     {
       sql: `UPDATE \`plan\` SET ${assignments.join(', ')} WHERE ${conditions.join(' AND ')};`,
-      note: 'The row already exists as a placeholder, so this is an UPDATE.',
+      note: publish
+        ? 'Writes the benefits and publishes the plan.'
+        : 'Writes the benefits and leaves the plan unpublished, so unconfirmed zeros are not shown as real.',
     },
     {
       sql: verifyPlanQuery(values.planGroupId, values.planYear),
@@ -157,14 +163,16 @@ const missingCompanyPairs = (companyId, countyIds) => {
 // auto-increment and PlanetScale runs each pasted statement in its own
 // session, so LAST_INSERT_ID() would not carry over: the id is read back with
 // a SELECT and typed in, and the join rows use plain VALUES.
-const buildInsert = (values, { companyId, countyIds, planId }) => {
+const buildInsert = (values, { companyId, countyIds, planId, publish }) => {
   const fields = columnFields()
 
   const columns = fields.map((field) => backtick(field.column))
   const literals = fields.map((field) => literal(field, values[field.name]))
 
-  columns.push(backtick(ALWAYS_PUBLISHED_COLUMN), backtick(COMPANY_COLUMN))
-  literals.push('TRUE', String(Number(companyId)))
+  // Unlike the UPDATE this is always written, because the column is
+  // NOT NULL DEFAULT TRUE — omitting it on an INSERT would publish the row.
+  columns.push(backtick(PUBLISHED_COLUMN), backtick(COMPANY_COLUMN))
+  literals.push(publish ? 'TRUE' : 'FALSE', String(Number(companyId)))
 
   const statements = [
     {
@@ -219,11 +227,61 @@ const buildInsert = (values, { companyId, countyIds, planId }) => {
 // The PlanetScale console runs a single statement at a time, so each one is
 // emitted standalone and on one line, to be run in order.
 export const buildStatements = (plan, context = {}) => {
-  const { mode = 'existing', companyId = '', countyIds = [], planId = '' } = context
+  const {
+    mode = 'existing',
+    companyId = '',
+    countyIds = [],
+    planId = '',
+    publish = false,
+  } = context
   if (validate(plan, context).length > 0) return []
 
   const values = effectiveValues(plan)
   return mode === 'new'
-    ? buildInsert(values, { companyId, countyIds, planId })
-    : buildUpdate(values)
+    ? buildInsert(values, { companyId, countyIds, planId, publish })
+    : buildUpdate(values, { publish })
+}
+
+// Offered on its own, for the day the remaining CMS details arrive and the
+// plan can go live without re-entering anything.
+export const publishStatement = (plan, context = {}) => {
+  if (context.publish) return null
+  if (validate(plan, context).length > 0) return null
+
+  const values = effectiveValues(plan)
+  return {
+    sql:
+      `UPDATE \`plan\` SET ${backtick(PUBLISHED_COLUMN)} = TRUE ` +
+      `WHERE \`plan_group_id\` = ${Number(values.planGroupId)} ` +
+      `AND \`plan_year\` = ${Number(values.planYear)};`,
+    note: 'Run this later, once every benefit above is confirmed. Nothing else changes.',
+  }
+}
+
+// Benefits sitting at 0 that probably just have not been published yet. A
+// reminder rather than a validation error: 0 is a real value for some columns,
+// and a hidden field is zeroed on purpose by the copay/coinsurance toggle.
+export const zeroedBenefits = (plan) =>
+  visibleFields(plan)
+    .filter(
+      (field) =>
+        !field.uiOnly &&
+        field.column &&
+        !ZERO_IS_LEGITIMATE.includes(field.name) &&
+        ['integer', 'decimal', 'integerOrNA'].includes(field.inputType) &&
+        Number(plan[field.name]) === 0,
+    )
+    .map((field) => field.label)
+
+// What the statement actually writes, so reviewing the JSON is equivalent to
+// reading the SQL.
+export const emittedPayload = (plan, context = {}) => {
+  const { mode = 'existing', companyId = '', countyIds = [], publish = false } = context
+  const values = effectiveValues(plan)
+
+  if (mode === 'new') {
+    return { ...values, benefitsPublished: publish, companyId: Number(companyId) || null, countyIds }
+  }
+  // An unpublished update leaves the column alone, so it is not in the payload.
+  return publish ? { ...values, benefitsPublished: true } : values
 }
