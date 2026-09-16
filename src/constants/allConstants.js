@@ -100,8 +100,10 @@ export const COUNTIES_COMPANIES = {
   table: 'counties_companies',
   companyColumn: 'company_id',
   countyColumn: 'county_id',
-  // Live pairings: Devoted sells in Linn, Tillamook and Lincoln; the rest in
-  // Linn only.
+  // TODO: re-derive with PAIRS_AUDIT_QUERY. Clatsop (4), Lane (5) and Yamhill
+  // (6) were added to the system after this list was captured and reportedly
+  // have counties_companies rows already, so a pairing below may be missing
+  // and its INSERT would be rejected as a duplicate key.
   pairs: [
     { companyId: 1, countyIds: [1, 2, 3] },
     { companyId: 2, countyIds: [1] },
@@ -109,6 +111,11 @@ export const COUNTIES_COMPANIES = {
     { companyId: 4, countyIds: [1] },
   ],
 }
+
+// Refreshes COUNTIES_COMPANIES.pairs above.
+export const PAIRS_AUDIT_QUERY =
+  'SELECT `company_id`, `county_id` FROM `counties_companies` ' +
+  'ORDER BY `company_id`, `county_id`;'
 
 // Columns to read back when confirming a statement landed.
 export const VERIFY_COLUMNS = [

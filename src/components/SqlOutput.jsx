@@ -4,8 +4,6 @@ export default function SqlOutput({
   statements,
   problems,
   mode,
-  planId,
-  onPlanIdChange,
   publish,
   onPublishChange,
   zeroed,
@@ -56,6 +54,22 @@ export default function SqlOutput({
             benefits.
           </p>
 
+          {publish && (
+            <div className="problems">
+              <p>
+                Publishing is ON. Every value below goes live as a real benefit,
+                including any still sitting at 0 because CMS has not released it.
+              </p>
+              {zeroed.length > 0 && (
+                <p>Currently 0 and about to be published: {zeroed.join(', ')}.</p>
+              )}
+              <p className="hint">
+                This default is temporary, for testing while the site has no
+                visitors. It must go back to off before the site is public.
+              </p>
+            </div>
+          )}
+
           {!publish && zeroed.length > 0 && (
             <div className="reminder">
               <p>
@@ -69,22 +83,9 @@ export default function SqlOutput({
             </div>
           )}
 
-          {mode === 'new' && (
-            <div className="field">
-              <label htmlFor="planId">New plan id (from statement 2)</label>
-              <input
-                id="planId"
-                type="number"
-                step="1"
-                value={planId}
-                onChange={(e) => onPlanIdChange(e.target.value)}
-              />
-              <p className="hint">
-                Until this is filled in, the join statements below show
-                &lt;plan id&gt; rather than a real value.
-              </p>
-            </div>
-          )}
+          <p className="hint">
+            Run these top to bottom. Each is independent and safe to re-run.
+          </p>
 
           <ol className="statements">
             {statements.map((step) => (

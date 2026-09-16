@@ -163,7 +163,42 @@ const missingCompanyPairs = (companyId, countyIds) => {
 // auto-increment and PlanetScale runs each pasted statement in its own
 // session, so LAST_INSERT_ID() would not carry over: the id is read back with
 // a SELECT and typed in, and the join rows use plain VALUES.
-const buildInsert = (values, { companyId, countyIds, planId, publish }) => {
+// Links a plan to a county without ever naming its id. The id is resolved at
+// execution time from the natural key, so there is no window in which a stale
+// or mistyped value can be pasted, and the composite primary key makes a
+// re-run fail as a duplicate rather than double-link.
+const linkCountyQuery = (values, countyId) => {
+  const { table, planColumn, countyColumn } = COUNTIES_PLAN
+  return (
+    `INSERT INTO \`${table}\` (${backtick(planColumn)}, ${backtick(countyColumn)}) ` +
+    `SELECT \`id\`, ${Number(countyId)} FROM \`plan\` ` +
+    `WHERE \`plan_group_id\` = ${Number(values.planGroupId)} ` +
+    `AND \`plan_year\` = ${Number(values.planYear)};`
+  )
+}
+
+// Returns the plan together with its county links, so a missing link shows up
+// as NULL in the counties column rather than having to be inferred.
+const verifyPlanWithCountiesQuery = (values) => {
+  const { table, planColumn, countyColumn } = COUNTIES_PLAN
+  return (
+    'SELECT p.`id`, p.`plan_name`, p.`plan_year`, p.`benefits_published`, ' +
+    'GROUP_CONCAT(c.`county_name` ORDER BY c.`id`) AS counties ' +
+    'FROM `plan` p ' +
+    `LEFT JOIN \`${table}\` cp ON cp.${backtick(planColumn)} = p.\`id\` ` +
+    `LEFT JOIN \`county\` c ON c.\`id\` = cp.${backtick(countyColumn)} ` +
+    `WHERE p.\`plan_group_id\` = ${Number(values.planGroupId)} ` +
+    `AND p.\`plan_year\` = ${Number(values.planYear)} ` +
+    'GROUP BY p.`id`, p.`plan_name`, p.`plan_year`, p.`benefits_published`;'
+  )
+}
+
+// A new plan inserts the row, then links it to its counties. Every statement
+// is independent and idempotent, so the list runs straight down with no stop
+// in the middle — an earlier two-phase version, which paused to have the new
+// id pasted back in, produced a plan row with no county links and therefore a
+// plan unreachable from every county.
+const buildInsert = (values, { companyId, countyIds, publish }) => {
   const fields = columnFields()
 
   const columns = fields.map((field) => backtick(field.column))
@@ -179,23 +214,14 @@ const buildInsert = (values, { companyId, countyIds, planId, publish }) => {
       sql: `INSERT INTO \`plan\` (${columns.join(', ')}) VALUES (${literals.join(', ')});`,
       note: 'Creates the row. `id` is omitted so MySQL assigns it.',
     },
-    {
-      sql:
-        `SELECT \`id\` FROM \`plan\` WHERE \`plan_group_id\` = ${Number(values.planGroupId)} ` +
-        `AND \`plan_year\` = ${Number(values.planYear)};`,
-      note: "Run this, then enter the id above to fill in the statements below.",
-    },
   ]
-
-  const id = planId === '' || planId === undefined ? '<plan id>' : String(Number(planId))
-  const { table, planColumn, countyColumn } = COUNTIES_PLAN
 
   countyIds.forEach((countyId) => {
     statements.push({
-      sql:
-        `INSERT INTO \`${table}\` (${backtick(planColumn)}, ${backtick(countyColumn)}) ` +
-        `VALUES (${id}, ${Number(countyId)});`,
-      note: 'Links the plan to a county. Re-running it fails on the composite primary key rather than double-linking.',
+      sql: linkCountyQuery(values, countyId),
+      note:
+        'Links the plan to a county, resolving the new id inline. Without ' +
+        'this row the plan is unreachable from every county.',
     })
   })
 
@@ -205,20 +231,16 @@ const buildInsert = (values, { companyId, countyIds, planId, publish }) => {
       sql:
         `INSERT INTO \`${cc.table}\` (${backtick(cc.companyColumn)}, ${backtick(cc.countyColumn)}) ` +
         `VALUES (${Number(companyId)}, ${Number(countyId)});`,
-      note: 'This company does not sell in that county yet. Without this row the company button never appears and the plan is unreachable.',
+      note:
+        'This company does not sell in that county yet, so without this row ' +
+        'the company button never appears. If it is rejected as a duplicate ' +
+        'the pairing already exists and nothing is wrong — skip it.',
     })
   })
 
   statements.push({
-    sql: verifyPlanQuery(values.planGroupId, values.planYear),
-    note: 'Confirm the row landed.',
-  })
-
-  statements.push({
-    sql:
-      `SELECT cp.\`plan_id\`, cp.\`county_id\`, c.\`county_name\` FROM \`${table}\` cp ` +
-      `JOIN \`county\` c ON c.\`id\` = cp.\`county_id\` WHERE cp.\`plan_id\` = ${id};`,
-    note: 'Confirm the county links exist.',
+    sql: verifyPlanWithCountiesQuery(values),
+    note: 'Confirm the row and its county links together. NULL under counties means the links did not land.',
   })
 
   return statements
@@ -227,18 +249,12 @@ const buildInsert = (values, { companyId, countyIds, planId, publish }) => {
 // The PlanetScale console runs a single statement at a time, so each one is
 // emitted standalone and on one line, to be run in order.
 export const buildStatements = (plan, context = {}) => {
-  const {
-    mode = 'existing',
-    companyId = '',
-    countyIds = [],
-    planId = '',
-    publish = false,
-  } = context
+  const { mode = 'existing', companyId = '', countyIds = [], publish = false } = context
   if (validate(plan, context).length > 0) return []
 
   const values = effectiveValues(plan)
   return mode === 'new'
-    ? buildInsert(values, { companyId, countyIds, planId, publish })
+    ? buildInsert(values, { companyId, countyIds, publish })
     : buildUpdate(values, { publish })
 }
 

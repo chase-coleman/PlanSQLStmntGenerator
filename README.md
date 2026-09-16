@@ -46,25 +46,33 @@ too gives you a copy of the old row, which is the only rollback you get.
 
 ### New plan → INSERT
 
-For a plan that does not exist in any year. This path emits a numbered
-sequence, because a new row's `id` is auto-increment and unknown:
+For a plan that does not exist in any year. Every statement is independent and
+idempotent, so the list runs straight down with no stop in the middle:
 
 1. `INSERT INTO plan (...) VALUES (...)` — `id` omitted so MySQL assigns it,
    `benefits_published` written explicitly
-2. `SELECT id FROM plan WHERE plan_group_id = ? AND plan_year = ?`
-3. …n. `INSERT INTO counties_plan (plan_id, county_id) VALUES (...)` — one per county
-4. `INSERT INTO counties_companies (company_id, county_id) VALUES (...)` — only when missing
-5. Verification `SELECT`s for the row and its county links
+2. …n. One `counties_plan` link per county, resolving the new id inline:
 
-Between steps 2 and 3 you paste the returned id into the **New plan id** field,
-and the remaining statements fill themselves in. Until then they render
-`<plan id>` rather than a guess.
+   ```sql
+   INSERT INTO `counties_plan` (`plan_id`, `county_id`)
+   SELECT `id`, 2 FROM `plan` WHERE `plan_group_id` = 25 AND `plan_year` = 2027;
+   ```
 
-**Why not `LAST_INSERT_ID()`?** The target is PlanetScale (Vitess) and each
-pasted statement runs in its own session, so it would not carry over. There are
-also no foreign keys anywhere in this schema — Vitess does not support them —
-so nothing would stop a join row pointing at a nonexistent plan. The `SELECT`
-is the only check that exists, which is why the flow is built around it.
+3. `INSERT INTO counties_companies (company_id, county_id)` — only where the
+   pairing is missing
+4. A verification `SELECT` returning the plan **and** its county links together
+
+**Why the id is never named.** `LAST_INSERT_ID()` does not work here —
+PlanetScale is Vitess and each pasted statement runs in its own session. An
+earlier version had you run a `SELECT id` and paste the result back into the
+form. That shipped a bug: stop after the first statement, and you have a plan
+row with no `counties_plan` rows, which is unreachable from every county in
+every year. Nothing catches it — there are no foreign keys, the API returns an
+empty list rather than an error, and the UI shows that as "no plans yet".
+
+Resolving the id inside each link statement removes the stop entirely. It also
+makes each one idempotent: the composite primary key means a re-run fails with
+`Duplicate entry` rather than double-linking.
 
 `plan_group_id` for a new plan has no sequence behind it. The tool shows
 `SELECT MAX(plan_group_id) + 1 FROM plan` in a **Look up first** panel and asks
@@ -113,12 +121,17 @@ never both, and the same applies to surgery. Choosing one hides the other's
 inputs and writes them as `0` — the unused side is always zeroed rather than
 left stale or omitted.
 
-**Publishing is opt-in and off by default.** CMS releases plan details in
-stages, and because every benefit column is `NOT NULL`, an unknown value has to
-be entered as `0` — there is no way to represent "unknown". A published row
+**Publishing is a toggle, currently defaulted ON.** CMS releases plan details
+in stages, and because every benefit column is `NOT NULL`, an unknown value has
+to be entered as `0` — there is no way to represent "unknown". A published row
 renders those placeholder zeros as real benefits, so a plan whose radiology
 copay simply has not been released yet would advertise "Radiology Copay: $0" to
 beneficiaries.
+
+> ⚠️ The checkbox therefore **defaults to off by design**, but is temporarily
+> defaulted **on** while 2027 data is being tested in production and the live
+> site has no visitors. Set `useState(true)` back to `useState(false)` in
+> `App.jsx` before the site is public.
 
 So the form has an **"All benefits confirmed — publish this plan"** checkbox,
 and only when it is ticked does the UPDATE include
