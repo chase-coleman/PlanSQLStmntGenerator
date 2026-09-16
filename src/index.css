@@ -316,3 +316,23 @@ button:hover {
     flex-wrap: wrap;
   }
 }
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.page-head button {
+  margin-top: 0;
+  flex: 0 0 auto;
+}
+
+button:disabled {
+  color: var(--subtle);
+  background: transparent;
+  border-color: var(--border);
+  cursor: default;
+}

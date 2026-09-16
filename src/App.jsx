@@ -15,21 +15,32 @@ import PlanForm from './components/PlanForm'
 import CurrentValues from './components/CurrentValues'
 import SqlOutput from './components/SqlOutput'
 
+// Every piece of form state in one place, so the initial render and the clear
+// button cannot drift apart.
+const INITIAL = {
+  mode: 'existing',
+  countyIds: [],
+  companyId: '',
+  plan: EMPTY_PLAN,
+  // Temporarily ON while the live site has no visitors and 2027 data is being
+  // tested in production. Publishing a row with unconfirmed zeros shows them
+  // to beneficiaries as real benefits, so set this back to false once the site
+  // is public.
+  publish: true,
+}
+
 export default function App() {
-  const [mode, setMode] = useState('existing')
+  const [mode, setMode] = useState(INITIAL.mode)
   // For an existing plan these only filter the picker. For a new plan the
   // company becomes company_id and the counties become counties_plan rows.
   // One plan row can serve several counties, so the selection is a set in
   // both modes.
-  const [countyIds, setCountyIds] = useState([])
-  const [companyId, setCompanyId] = useState('')
-  // Read back from the database after the INSERT; the join rows need it.
-  const [newPlanId, setNewPlanId] = useState('')
-  // Publishing is a deliberate, separate decision, so it starts off.
-  const [publish, setPublish] = useState(false)
-  const [plan, setPlan] = useState(EMPTY_PLAN)
+  const [countyIds, setCountyIds] = useState(INITIAL.countyIds)
+  const [companyId, setCompanyId] = useState(INITIAL.companyId)
+  const [publish, setPublish] = useState(INITIAL.publish)
+  const [plan, setPlan] = useState(INITIAL.plan)
 
-  const context = { mode, companyId, countyIds, planId: newPlanId, publish }
+  const context = { mode, companyId, countyIds, publish }
 
   const groups = matchingGroups({ countyIds, companyId })
   const selectedGroup = mode === 'new' ? null : findGroup(plan.planGroupId)
@@ -41,6 +52,26 @@ export default function App() {
   const prelude = preludeStatements(context)
   const publishLater = publishStatement(plan, context)
   const zeroed = zeroedBenefits(plan)
+
+  const isPristine =
+    mode === INITIAL.mode &&
+    companyId === INITIAL.companyId &&
+    countyIds.length === 0 &&
+    Object.keys(EMPTY_PLAN).every((key) => plan[key] === EMPTY_PLAN[key])
+
+  const clearAll = () => {
+    if (
+      !isPristine &&
+      !window.confirm('Clear every field and start a new plan?')
+    ) {
+      return
+    }
+    setMode(INITIAL.mode)
+    setCountyIds(INITIAL.countyIds)
+    setCompanyId(INITIAL.companyId)
+    setPublish(INITIAL.publish)
+    setPlan(INITIAL.plan)
+  }
 
   const updateField = (name, value) => {
     setPlan((prev) => ({ ...prev, [name]: value }))
@@ -63,7 +94,6 @@ export default function App() {
   // a new plan claims the next unused id, an existing one must be re-picked.
   const changeMode = (value) => {
     setMode(value)
-    setNewPlanId('')
     setPlan((prev) => ({
       ...prev,
       planGroupId: '',
@@ -97,7 +127,12 @@ export default function App() {
 
   return (
     <main>
-      <h1>Plan SQL Statement Generator</h1>
+      <div className="page-head">
+        <h1>Plan SQL Statement Generator</h1>
+        <button type="button" onClick={clearAll} disabled={isPristine}>
+          Clear
+        </button>
+      </div>
       <p className="lede">
         {mode === 'new'
           ? 'Creates a plan row for 2027 and its county join rows.'
@@ -124,8 +159,6 @@ export default function App() {
         statements={statements}
         problems={problems}
         mode={mode}
-        planId={newPlanId}
-        onPlanIdChange={setNewPlanId}
         publish={publish}
         onPublishChange={setPublish}
         zeroed={zeroed}

@@ -55,7 +55,10 @@ beneficiaries.
 
 So publishing is a deliberate, separate act:
 
-- A checkbox, **off by default**, controls it.
+- A checkbox controls it. It is **off by default by design**, but is currently
+  defaulted **on** (`useState(true)` in `App.jsx`) while 2027 data is being
+  tested in production against a site with no visitors. This is temporary and
+  should go back to `false` before the site is public.
 - When unticked, an UPDATE **omits the column** rather than writing `FALSE`,
   so re-running a partial update can never unpublish a live plan.
 - An **INSERT is the exception** and always writes it explicitly, because the
@@ -74,12 +77,24 @@ unique nor populated for 2027.
 
 ### The two-step id handoff
 
-A new plan's `id` is unknown when you paste the INSERT. `LAST_INSERT_ID()` does
-not work here: PlanetScale is Vitess, and each pasted statement runs in its own
-session. So statement 2 is a `SELECT id ...`, and you type the result into the
-**New plan id** field, which fills in the join statements. There are also no
-foreign keys anywhere — Vitess does not support them — so that SELECT is the
-only thing preventing a join row pointing at a nonexistent plan.
+A new plan's `id` is unknown when you paste the INSERT, and `LAST_INSERT_ID()`
+does not work here: PlanetScale is Vitess, and each pasted statement runs in its
+own session.
+
+The first design had you run `SELECT id ...` and paste the result into a **New
+plan id** field, which then filled in the join statements. **That shipped a
+bug.** A plan was entered, the `plan` row landed, the `counties_plan` rows never
+did, and the plan was invisible on the live site — `PlanRepository` reaches
+plans *through* `counties_plan`, so a plan with no join row is unreachable from
+every county in every year. Nothing catches it: no foreign keys (Vitess), the
+API returns an empty list rather than an error, and the UI renders that
+identically to a county that genuinely has no plans.
+
+The fix was to delete the paste step. Each link statement resolves the id
+inline with `INSERT ... SELECT` on the natural key, so the list has no
+mandatory stop and every statement is idempotent. The general lesson: a
+generated sequence that *can* be half-completed eventually will be, so prefer a
+shape with no stop over one that documents the stop.
 
 ### Plan groups and counties
 
